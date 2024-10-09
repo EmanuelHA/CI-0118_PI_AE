@@ -38,7 +38,12 @@ _start:             ; Punto de entrada del programa
 init:               ; Inicializacion de variables
     mov byte [player], 0x01; jugador default = 1
     ; Set token centrales
+    xor edi, edi ;  ; Pone a 0 el registro EDI (lo usa como índice o puntero).
+    mov ecx, 64  ; tamaño del array
+    mov al, 0    ; valor a asignar
+    rep stosb    ; asigna el valor repitiendo 64 veces, en cada lugar del array
     ret
+
 
 change_player:      ; Cambio de jugador (REQ: player = 0x01 | player = 0x02)
     mov al, [player]
