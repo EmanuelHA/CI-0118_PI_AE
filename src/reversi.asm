@@ -1,47 +1,52 @@
 section .data
-    clear_screen db 0x1B, '[2J', 0  ; Código de escape ANSI para limpiar pantalla
-	newline db 0xA ; nueva línea
+    CLR_SCREEN_CMD  db 0x1B, '[2J', 0   ; Codigo de escape ANSI para limpiar pantalla
+	LINE_FEED       equ 0x0A            ; Nueva línea
+    SPACE           equ 0x20            ; Espacio 
+    BUFFER_LENGTH   equ 256             ; Tamaño del buffer de entrada/salida
+
 	prompt_fila db 'Ingrese la fila (0-7): ', 0
-    prompt_fila_len equ $  
+    prompt_fila_len equ $ - prompt_columna
     prompt_columna db 'Ingrese la columna (0-7): ', 0
-    prompt_columna_len equ $  
+    prompt_columna_len equ $ - prompt_columna
     prompt_valor db 'Ingrese el valor: ', 0
-    prompt_valor_len equ $  
-	separator db '-----------------', 0xA
-    separator_len equ $-separator
-    
+    prompt_valor_len equ $ - prompt_valor  
+	; separator db '-----------------', 0xA
+    ; separator_len equ $-separator
+    ; separators db  ╣, ║, ╗, ╝, ╚, ╔, ╩, ╦, ╠, ═, ╬, ø, o, 0
+    ; separators_len equ $ - separators
 
 section .bss        ; Reserva de espacio para las variables
     buffer          resb 256        ; Reserva 256B en mem. para el buffer de IO
-    board           resb 64   ; Reserva 64B en memoria para el tablero e inicializa en 0 cada celda
+    board           resb 64         ; Reserva 64B en memoria para el tablero e inicializa en 0 cada celda
     player          resb 1          ; Reserva 1B en mem. (Jugador 1 = fichas negras, Jugador 2 = fichas blancas)
-    row       resb 1          ; Reserva 1B para almacenar el valor de la fila a la cual accesar
-    column    resb 1          ; Reserva 1B para almacenar el valor de la columna a la cual accesar
+    row             resb 1          ; Reserva 1B para almacenar el valor de la fila a la cual accesar
+    column          resb 1          ; Reserva 1B para almacenar el valor de la columna a la cual accesar
     p_one_has_moves resb 1          ; Reserva 1B para verificar si el jugador 1 tiene movimientos
     p_two_has_moves resb 1          ; Reserva 1B para verificar si el jugador 2 tiene movimientos
-	value resb 1  ; variable para almacenar el valor ingresado
+	value           resb 1          ; variable para almacenar el valor ingresado
 
 section .text
     global _start
 
 _start:             ; Punto de entrada del programa
     call init
-    ;call read_input
+    call read_input
 	; Asigna un valor a una posición específica preguntándole al usuario
-    ;         call set_value
-	; Imprime el tablero
-    call print_board
+    ;call set_value
+    call draw_board
+    call print_buf
+    ;call clear_console
 
     jmp _exit
 
 
 init:               ; Inicializacion de variables
     mov byte [player], 0x01; jugador default = 1
+    xor edi, board  ; Puntero al buffer -> EDI
+    mov ecx, 64     ; tamaño del array
+    mov al, 0       ; valor a asignar
+    rep stosb       ; asigna el valor repitiendo 64 veces, en cada lugar del array
     ; Set token centrales
-    xor edi, edi ;  ; Pone a 0 el registro EDI (lo usa como índice o puntero).
-    mov ecx, 64  ; tamaño del array
-    mov al, 0    ; valor a asignar
-    rep stosb    ; asigna el valor repitiendo 64 veces, en cada lugar del array
     ret
 
 
@@ -55,12 +60,13 @@ set_token:          ; Coloca la ficha del jugador en la posicion del tablero ind
     mov edx, [player]
     mov [board + eax], edx
 	ret
+
 set_value:
     ; Pregunta por la fila
     mov eax, 4
     mov ebx, 1
     lea ecx, [prompt_fila]
-    mov edx, prompt_fila_len - prompt_fila
+    mov edx, prompt_fila_len
     int 0x80
 
     mov eax, 3
@@ -75,7 +81,7 @@ set_value:
     mov eax, 4
     mov ebx, 1
     lea ecx, [prompt_columna]
-    mov edx, prompt_columna_len - prompt_columna
+    mov edx, prompt_columna_len
     int 0x80
 
     mov eax, 3
@@ -90,7 +96,7 @@ set_value:
     mov eax, 4
     mov ebx, 1
     lea ecx, [prompt_valor]
-    mov edx, prompt_valor_len - prompt_valor
+    mov edx, prompt_valor_len
     int 0x80
 
     mov eax, 3
@@ -107,6 +113,7 @@ set_value:
     add edi, ebx ; suma la columna
     mov [board + edi], cl ; asigna el valor
     ret
+
 validate_move:      ; Validar la jugada (REQ: eax <- posicion, RET: ebx -> validacion)
 
 	ret
@@ -119,84 +126,96 @@ calc_points:        ; Recorre el tablero y suma los puntos acorde al jugador act
 
 	ret
 
-calc_offset_pos:    ; Calcula la posicion para acceder a los elementos del tablero en la fila y columna dados [board + posicion]
-                    ; (REQ: board_row <- fila, board_column <- columna | RET: ax -> posicion)
+;/**
+; * @brief Calcula una posición en el tablero.
+; *
+; * Dadas una fila y columna válidas, calcula la dirección en memoria de la casilla del tablero a la que se desea accesar.
+; *
+; * @param board_row Fila i-ésima del tablero.
+; * @param board_column Columna j-ésima del tablero.
+; * @return AX guarda la dirección en memoria asociada a la pos (i,j) del tablero.
+; */
+calculate_board_offset:
 	ret
 
-verify_game_state:  ; Verifica el estado del juego (en curso, finalizado)
+verify_game_state:
+
 	ret
 
-read_input:         ; Lee el input del usuario
+;/**
+; * @brief Lee el input del usuario
+; * 
+; * Recibe mediante la entrada estándar (stdin) los datos que ingrese el usuario.
+; */
+read_input:
     mov eax, 0x3            ; Llamada al sistema para lectura
     mov ebx, 0x0            ; Seleccion de entrada estandar (stdin)
     mov ecx, buffer         ; Buffer que almacenara la entrada
     mov edx, 0x10           ; Cantidad de bytes a leer
 	ret 
 
-validate_input:     ; Valida el formato y el largo de la entrada ("XY\n"), X = [1-8], Y = [A-H]
-                    ; (REQ: ax == 3, buffer <- cadena de entrada | RET: ax -> resultado booleano)
+;/**
+; * @brief Valida el formato y el largo de la entrada.
+; * 
+; * Valida que los datos ingresados estén en el formato "XY\n"
+; * donde X = [1, 8], Y = [A, H], \n = salto de línea, además AX == 3.
+; * AX pasa a contener el largo del input cuando se usa la entrada estándar (stdin).
+; * @return AX = 0 si la entrada no es válida, AX = 1 si la entrada es válida.
+; */
+validate_input:
 
 	ret
 
-get_input_offset:   ; Calcula el desplazamiento usando la entrada del usuario
+get_offset:   ; Calcula el desplazamiento usando la entrada del usuario
 ; f*8 + c
 	ret
 
+;/**
+; * @brief Dibuja el tablero en el buffer
+; * 
+; * Convierte los valores enteros de las casillas del tablero en caracteres y los copia al buffer
+; * además de agregarle formato a la salida.
+; * @return EDX Pasa a contener la cantidad de caracteres escritos en el buffer.
+; */
+draw_board:
+    mov esi, board          ; ESI <- puntero al tablero
+    mov edi, buffer         ; EDI <- puntero al buffer
+    mov ecx, 8              ; i = 8 para bucle externo (loop_i)
+loop_i:
+    push ecx                ; Apila i para no perderlo
+    mov ecx, 8              ; j = 8 para bucle interno (loop_j)
+loop_j:
+    add AL, 
+    lodsb                   ; Carga el byte al que apunta ESI en el reg. AL y ajusta ESI a la sig. pos.
+    add AL, 48              ; Convierte el entero en el tablero a caracter ASCII
+    stosb                   ; Guarda el contenido de AL en la dir. de EDI y ajusta EDI a la sig. pos.
+    loop loop_j             ; (j == 0)? T: j-- & JMP loop_j : F: fin j_loop
+    pop ecx                 ; Restaura i
+    mov al, LINE_FEED       ; Concatenar salto de línea
+    stosb
+    loop loop_i             ; (i == 0)? T: i-- & JMP loop_i : F: fin j_loop
 
-print_board: ; Dibuja el tablero
-    mov esi, board    ; Apuntar al inicio del tablero
-    mov ecx, 8        ; Número de filas (8 filas)
-
-print_row:
-    push ecx          ; Guardar contador de filas
-    mov ecx, 8        ; Número de columnas (8 columnas por fila)
-   
-print_col:
-    mov al, [esi]     ; Cargar el valor actual del tablero en AL
-    add al, '0'       ; Convertir el valor numérico a su equivalente ASCII ('0' o '1')
-    mov [esp-1], al   ; Colocar el carácter en la pila para impresión
-    mov eax, 4        ; Llamada al sistema de escritura
-    mov ebx, 1        ; Descriptor de archivo (stdout)
-    lea ecx, [esp-1]  ; Dirección del carácter en la pila
-    mov edx, 1        ; Tamaño de 1 byte para la impresión
-    int 0x80          ; Llamada a la interrupción del sistema
-
-    ; Imprimir separador de columnas "|"
-    mov al, '|'
-    mov [esp-1], al
-    mov eax, 4
-    mov ebx, 1
-    lea ecx, [esp-1]
-    mov edx, 1
-    int 0x80
-
-    inc esi           ; Avanzar al siguiente elemento del tablero
-    loop print_col    ; Repetir hasta completar las 8 columnas
-
-    ; Imprimir una nueva línea después de la fila
-    mov eax, 4
-    mov ebx, 1
-    lea ecx, [newline]
-    mov edx, 1
-    int 0x80
-
-    pop ecx           ; Restaurar el contador de filas
-    loop print_row    ; Repetir hasta completar las 8 filas
-
-    ; Imprimir el separador final de filas
-    mov eax, 4
-    mov ebx, 1
-    lea ecx, [separator]
-    mov edx, separator_len
-    int 0x80
-
+    mov edx, edi
+    sub edx, buffer
     ret
 
+;/**
+; * @brief Imprime el buffer
+; * 
+; * Carga en EBX un puntero al buffer y llama al sistema para imprimirlo en la salida estándar
+; * @param EDX debe contener la cantidad de caracteres a imprimir
+; */
+print_buf:
+    mov eax, 0x4            ; Llamada al sistema para esritura
+    mov ebx, 0x1            ; Seleccion de salida estandar (stdout)
+    mov ecx, buffer         ; Buffer de salida
+    int 0x80
+    ret
 
 clear_console:      ; Limpia la consola
     mov eax, 0x4            ; Llamada al sistema para esritura
     mov ebx, 0x1            ; Seleccion de salida estandar (stdout)
-    mov ecx, clear_screen   ; Secuencia de escape
+    mov ecx, CLR_SCREEN_CMD ; Secuencia de escape
     mov edx, 0x4            ; Longitud de la secuencia
     int 0x80
 	ret
