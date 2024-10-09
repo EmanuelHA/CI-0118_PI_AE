@@ -1,22 +1,20 @@
 section .data
-    CLR_SCREEN_CMD  db 0x1B, '[2J', 0   ; Codigo de escape ANSI para limpiar pantalla
+    CLR_SCREEN_CMD  db  0x1B, '[2J', 0  ; Codigo de escape ANSI para limpiar pantalla
 	LINE_FEED       equ 0x0A            ; Nueva línea
     SPACE           equ 0x20            ; Espacio 
-    BUFFER_LENGTH   equ 256             ; Tamaño del buffer de entrada/salida
+    BUFFER_LENGTH   equ 288             ; Tamaño del buffer de entrada/salida
+    COL_SEPARATOR   equ '|'            ; Separador de columnas
+    ROW_SEPARATOR   equ '-'            ; Separador de columnas
 
 	prompt_fila db 'Ingrese la fila (0-7): ', 0
     prompt_fila_len equ $ - prompt_columna
     prompt_columna db 'Ingrese la columna (0-7): ', 0
     prompt_columna_len equ $ - prompt_columna
     prompt_valor db 'Ingrese el valor: ', 0
-    prompt_valor_len equ $ - prompt_valor  
-	; separator db '-----------------', 0xA
-    ; separator_len equ $-separator
-    ; separators db  ╣, ║, ╗, ╝, ╚, ╔, ╩, ╦, ╠, ═, ╬, ø, o, 0
-    ; separators_len equ $ - separators
+    prompt_valor_len equ $ - prompt_valor
 
 section .bss        ; Reserva de espacio para las variables
-    buffer          resb 256        ; Reserva 256B en mem. para el buffer de IO
+    buffer          resb 288        ; Reserva 256B en mem. para el buffer de IO
     board           resb 64         ; Reserva 64B en memoria para el tablero e inicializa en 0 cada celda
     player          resb 1          ; Reserva 1B en mem. (Jugador 1 = fichas negras, Jugador 2 = fichas blancas)
     row             resb 1          ; Reserva 1B para almacenar el valor de la fila a la cual accesar
@@ -42,7 +40,7 @@ _start:             ; Punto de entrada del programa
 
 init:               ; Inicializacion de variables
     mov byte [player], 0x01; jugador default = 1
-    xor edi, board  ; Puntero al buffer -> EDI
+    mov edi, board  ; Puntero al tablero -> EDI
     mov ecx, 64     ; tamaño del array
     mov al, 0       ; valor a asignar
     rep stosb       ; asigna el valor repitiendo 64 veces, en cada lugar del array
@@ -185,14 +183,20 @@ loop_i:
     push ecx                ; Apila i para no perderlo
     mov ecx, 8              ; j = 8 para bucle interno (loop_j)
 loop_j:
-    add AL, 
     lodsb                   ; Carga el byte al que apunta ESI en el reg. AL y ajusta ESI a la sig. pos.
-    add AL, 48              ; Convierte el entero en el tablero a caracter ASCII
+    add al, 48              ; Convierte el entero en el tablero a caracter ASCII
     stosb                   ; Guarda el contenido de AL en la dir. de EDI y ajusta EDI a la sig. pos.
-    loop loop_j             ; (j == 0)? T: j-- & JMP loop_j : F: fin j_loop
-    pop ecx                 ; Restaura i
-    mov al, LINE_FEED       ; Concatenar salto de línea
+    mov al, COL_SEPARATOR   ; Agrega el separador de columna
     stosb
+    loop loop_j             ; (j == 0)? T: j-- & JMP loop_j : F: fin j_loop
+    mov al, LINE_FEED       
+    stosb                   ; Concatenar salto de línea
+    mov al, ROW_SEPARATOR   ; Carga los separadores de fila en AL
+    mov ecx, 16
+    rep stosb               ; Concatena AL ('|') 16 veces en el buffer
+    mov al, LINE_FEED       
+    stosb                   ; Concatenar salto de línea
+    pop ecx                 ; Restaura i
     loop loop_i             ; (i == 0)? T: i-- & JMP loop_i : F: fin j_loop
 
     mov edx, edi
