@@ -1,19 +1,20 @@
 section .data
     CLR_SCREEN_CMD  db  0x1B, '[2J'     ; Codigo de escape ANSI para limpiar pantalla
     BUFFER_LENGTH   equ 512             ; Tamaño del buffer de entrada/salida
-    BOARD_SIZE      equ 64              ; Tamaño total del tablero
-    N               equ 8               ; Tamaño del tablero cuadrado NxN
+    N               equ 8               ; Tamaño del tablero NxN
+    BOARD_SIZE      equ N*N             ; Tamaño total del tablero
     COL_SEPARATOR   equ '|'             ; Separador de columnas
     ROW_SEPARATOR   equ '-'             ; Separador de columnas
     P_ONE           equ 0x01            ; Máscara de jugador 1
     p_TWO           equ 0x02            ; Máscara de jugador 2
 	LINE_FEED       equ 0x0A            ; Nueva línea
 
+    DIRECTION db -9, -8, -7, -1, 1, 7, 8, 9 ; Representa las direcciones horizontal
+
 	msg_input           db 'Ingrese la fila "F" y la columa "C" en el formato "FC".', LINE_FEED
     msg_input_len       equ $ - msg_input
     msg_invalid_in      db 'Entrada no valida, presione la tecla ENTER para continuar', LINE_FEED
     msg_invalid_in_len  equ $ - msg_invalid_in
-    msg_end_
 section .bss        ; Reserva de espacio para las variables
     buffer      resb BUFFER_LENGTH  ; Reserva 512B en mem. para el buffer de IO
     board       resb BOARD_SIZE     ; Reserva mem. en memoria para el tablero (8x8 = 64 bytes)
@@ -34,7 +35,7 @@ loop_start:
     call draw_board
     mov ecx, buffer         ; Buffer de salida (largo dado por la funcion draw_board)
     call print
-    mov ecx, msg_input      ; Buffer de salida
+    lea ecx, msg_input      ; Buffer de salida
     mov edx, msg_input_len  ; Largo del buffer
     call print
     call read_input
@@ -42,7 +43,6 @@ loop_start:
     jz loop_start
     ; Validar jugada
     call validate_move
-    jz loop_start
     ; Hacer jugada
     call flank
     ; Cálculo de puntos
@@ -51,10 +51,8 @@ loop_start:
     call change_player
     ; Actualización del estado de la partida
     call update_game_state
-    call clear_console
-    call draw_board
-    mov ecx, buffer         ; Buffer de salida (largo dado por la funcion draw_board)
-    call print
+    jz loop_start
+game_over:
     ;Salida
     jmp _exit
 
@@ -72,19 +70,22 @@ init:               ; Inicializacion de variables
     mov byte [board + 0x24], 0x1
     ret
 
-change_player:      ; Cambio de jugador (REQ: player = 0x01 | player = 0x02)
+; Cambio de jugador (REQ: player = 0x01 | player = 0x02)
+change_player:
     mov al, [player]
-    xor al, 0x03            ; Mascara para invertir valores de los primeros 2 bits
+    xor al, 0x03            ; Máscara para invertir valores de los primeros 2 bits
     mov [player], al
 	ret
 
-set_token:          ; Coloca la ficha del jugador en la posicion del tablero indicada (REQ: eax <- posicion)
+; Coloca la ficha del jugador en la posición del tablero indicada
+set_token:
     mov edx, [player]
-    mov [board + board_index], edx
+    mov eax, [index]
+    mov [board + eax], edx
 	ret
 
+; Calcula la posición en el array y asigna el valor
 set_value:
-    ; Calcula la posición en el array y asigna el valor
     movzx eax, byte [row] ; fila
     mov edi, N
     mul edi  ; multiplicar por el número de columnas
@@ -92,15 +93,20 @@ set_value:
     mov [board + eax], cl ; asigna el valor
     ret
 
-validate_move:      ; Validar la jugada (REQ: eax <- posicion, RET: ebx -> validacion)
+; Validar la jugada (REQ: eax <- posicion, RET: ebx -> validacion)
+validate_move:
 
 	ret
 
-flank:              ; Flanquea fichas en la direccion indicada (REQ: eax <- posicion inicial, ebx <- posicion final)
-
+; Flanquea fichas en la direccion indicada (REQ: eax <- posicion inicial, ebx <- posicion final)
+flank:
 	ret
 
-calculate_points:        ; Recorre el tablero y suma los puntos acorde al jugador actual
+; Calcula todas las movidas en el tablero para el jugador en turno
+calculate_moves:
+
+; Recorre el tablero y suma los puntos acorde al jugador actual
+calculate_points:
 
 	ret
 
@@ -114,8 +120,10 @@ calculate_points:        ; Recorre el tablero y suma los puntos acorde al jugado
 ; * @return AX guarda la dirección en memoria asociada a la pos (i,j) del tablero.
 ; */
 calculate_board_index:
+
 	ret
  
+; Verifica si ambos jugadores tienen jugadas válidas y además si el tablero está lleno. 
 update_game_state:
 
 	ret
@@ -128,10 +136,10 @@ update_game_state:
 read_input:
     mov eax, 0x3            ; Llamada al sistema para lectura
     mov ebx, 0x0            ; Seleccion de entrada estandar (stdin)
-    mov ecx, buffer         ; Buffer que almacenara la entrada
+    lea ecx, buffer         ; Buffer que almacenara la entrada
     mov edx, 0x10           ; Cantidad de bytes a leer
     int 0x80
-	ret 
+	ret
 
 ;/**
 ; * @brief Valida el formato de la entrada y guarda fila y columna.
@@ -208,6 +216,20 @@ loop_j:
 
     pop ecx                 ; Restaura i
     loop loop_i             ; (i == 0)? T: i-- & JMP loop_i : F: fin j_loop
+    ; Construcción del ID de las columnas
+    mov al, ' '
+    mov ecx, 2              ; Contador para rep = 2
+    rep stosb               ; Concatenar espacio x3
+    mov ecx, N              ; k = 8
+loop_k:
+    mov al, ' '
+    stosb                   ; Concatenar espacio
+    mov al, 'I'
+    sub al, cl              ; AL = 'I' - index k
+    stosb                   ; Concatenar caracter en AL
+    loop loop_k
+    mov al, LINE_FEED       
+    stosb                   ; Concatenar salto de línea
 
     mov edx, edi            ; Mueve la última_dir.+1 sobre la cual se escribió en el buffer
     sub edx, buffer         ; Resta primer - última dir. para obtener la cant. de carácteres escritos
@@ -216,7 +238,7 @@ loop_j:
 ;/**
 ; * @brief Imprime una cadena de texto
 ; * 
-; * Imprime la cantidad de caracteres solicitada de lo que contenga el buffer
+; * Imprime la caltidad de caracteres solicitados, situados en el buffer proveído en ECX
 ; * @param ECX un puntero al buffer de salida
 ; * @param EDX debe contener la cantidad de caracteres a imprimir
 ; */
