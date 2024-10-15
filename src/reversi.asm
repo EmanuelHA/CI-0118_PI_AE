@@ -92,7 +92,7 @@ init:
     mov byte [column], 0x00      ; Columna = 0
     mov byte [player], P_ONE     ; Jugador = 1 (default)
     mov word [points], 0x0202    ; Puntos J1 = Puntos J2 = 2
-    mov byte [valid_moves], 0x03 ; Jugadas válidas = 3
+    mov byte [has_moves], 0x03 ; Jugadas válidas = 3
     ret
 
 ; Cambio de jugador (REQ: player = 0x01 | player = 0x02)
@@ -121,7 +121,7 @@ calculate_relative_index:
     movzx eax, byte [row]   ; EAX = fila
     mov cl, N
     mul cl                  ; AX = fila*N
-    add eax, byte [column]  ; suma la columna
+    add al, byte [column]  ; suma la columna
     mov edi, eax
 	ret
 
@@ -134,14 +134,13 @@ set_value:
 ; Calcula la posición en el array y retorna el contenido en AX
 get_value:
     call calculate_relative_index
-    mov ax, byte [board + edi]
+    mov al, byte [board + edi]
     ret
 
 ; Verifica si la ficha en el tablero en la posición dada por la var. index pertenece al jugador
 ; Actualiza las banderillas del procesador acorde (ZF = 1; board[ECX] == player)(SF = 1; board[ECX] < player)
 is_player_token:
     call calculate_relative_index
-    movzx edi, byte [index]
     mov al, [board + edi]
     cmp al, [player]
     ret
@@ -155,8 +154,8 @@ is_player_token:
 ; * @return points Se actualiza los puntos de los jugadores
 ; */
 calculate_valid_moves:
-mov [row], 0x0
-mov [column], 0x0
+mov byte [row], 0x0
+mov byte [column], 0x0
 mov ecx, BOARD_SIZE         ; Contador i = 64
 lea si, board
 ; Recorre el tablero
@@ -179,17 +178,18 @@ find_move:
 add byte [row], al
 add byte [column], ah
 ; Valida los limites del tablero
-cmp [row], N
+cmp byte [row], N
 ja no_move
-cmp [column], N
+cmp byte [column], N
 ja no_move
 ; Compara el valor del tablero i, j con el de el jugador
 call calculate_relative_index
-cmp [board + edi], [player]
+mov bl, byte [board + edi]
+cmp bl, byte [player]
 je no_move                  ; Si la ficha pertenece al jugador, la jugada no es válida
-cmp [board + edi], 0x0
+cmp byte [board + edi], 0x0
 jne opponent_token_found
-cmp [othr_p_tokn], 1
+cmp byte [othr_p_tokn], 1
 ; Si la celda está vacía y ficha de oponente (othr_p_tokn) = 1, jugada válida, marcamos
 jmp valid_move
 ; En caso contrario "ficha del oponente" = 1 y continuamos en esa dirección
@@ -197,6 +197,7 @@ opponent_token_found:
 mov byte [othr_p_tokn], 0x1
 jmp find_move
 valid_move:
+loop valid_moves_loop_i ; !!! MOVER O Reestructurar debido a out of bounds jump!!
 mov byte [othr_p_tokn], 0x0
 mov byte [board + edi], 0x3
 no_move:
@@ -207,16 +208,19 @@ loop look_in_all_directions
 
 no_player_token:
 inc byte [column]           ; Incrementa la columna
-cmp [column], 8
+cmp byte [column], 8
 jb no_adjust                ; Ajusta la fila y la columna en caso de desborde
 inc byte [row]              
 mov byte [column], 0
 no_adjust:
 pop ecx                     ; Restaura i (ECX)
-loop valid_moves_loop_i
 pop ax
+;!!! AQUÍ va el jump que presenta error debido a que es un saldo demasiado lejos de su etiqueta
     ret
 
+validate_move:
+
+    ret
 
 ;/**
 ; * @brief Flanquea en la posición y dirección indicadas
