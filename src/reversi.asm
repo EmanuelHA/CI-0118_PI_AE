@@ -192,6 +192,7 @@ find_move:
     cmp bl, byte [player]
     je no_move                  ; Si la ficha pertenece al jugador, la jugada no es valida
     cmp byte [board + edi], 0x0
+    ; VALIDAR EL NO CONTEO DE LAS FICHAS 0x3 (Marcas de jugadas válidas)
     jne opponent_token_found    ; Si la casilla no esta libre, activa la banderilla othr_p_tokn
     cmp byte [othr_p_tokn], 1
     je valid_move               ; Si la casilla esta vacia y othr_p_tokn == 1, jugada valida
@@ -217,8 +218,8 @@ no_adjust:
     push esi                        ; Guarda el valor de ESI en la pila
     sub esi, ecx
     cmp esi, BOARD_SIZE
-    je valid_moves_loop_end         ; Finaliza el loop si (ESI - board) == BOARD_SIZE
     pop esi                         ; Recupera el valor de ESI de la pila
+    je valid_moves_loop_end         ; Finaliza el loop si (ESI - board) == BOARD_SIZE
     jmp valid_moves_loop
 valid_moves_loop_end:
     ret
