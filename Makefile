@@ -16,6 +16,10 @@ LINKER_FLAGS = -m elf_i386
 # Regla por defecto
 all: $(EXEC_FILE)
 
+# Regla para correr el juego
+run: 
+	./$(EXEC_FILE)
+
 # Regla para crear el ejecutable ($< dependencias, $@ objetivo)
 $(EXEC_FILE): $(OBJ_FILE)
 	$(LINKER) $(LINKER_FLAGS) $< -o $@

@@ -42,14 +42,17 @@ section .text
 _start:
     call init
 loop_start:
-    ; Entrada de datos
+    ; Dibujado e impresion del tablero
+    call calculate_valid_moves
     call clear_console
     call draw_board
-    mov ecx, buffer         ; Buffer de salida (largo dado por la funcion draw_board)
-    call print
+    lea ecx, buffer         ; Buffer de salida (largo en EDX dado por la funcion draw_board)
+    call print              ; Imprime el buffer
+    ; Solicitud de datos al usuario
     lea ecx, msg_input      ; Buffer de salida
     mov edx, msg_input_len  ; Largo del buffer
     call print
+    ; Entrada de datos
     call read_input
     call validate_input
     jz loop_start
@@ -88,11 +91,11 @@ init:
     mov byte [board + 0x23], 0x2
     mov byte [board + 0x24], 0x1
     ; Variables del juego
-    mov byte [row], 0x00         ; Fila = 0
-    mov byte [column], 0x00      ; Columna = 0
-    mov byte [player], P_ONE     ; Jugador = 1 (default)
-    mov word [points], 0x0202    ; Puntos J1 = Puntos J2 = 2
-    mov byte [has_moves], 0x03 ; Jugadas válidas = 3
+    mov byte [row], 0x00        ; Fila = 0
+    mov byte [column], 0x00     ; Columna = 0
+    mov byte [player], P_ONE    ; Jugador = 1 (default)
+    mov word [points], 0x0202   ; Puntos J1 = Puntos J2 = 2
+    mov byte [has_moves], 0x03  ; Jugadas válidas = 3
     ret
 
 ; Cambio de jugador (REQ: player = 0x01 | player = 0x02)
@@ -118,11 +121,12 @@ set_token:
 ; * @return EDI guarda desplazamiendo necesario para alcanzar la pos. board[i, j].
 ; */
 calculate_relative_index:
-    movzx eax, byte [row]   ; EAX = fila
-    mov cl, N
-    mul cl                  ; AX = fila*N
+    push ax
+    movzx ax, byte [row]   ; EAX = fila
+    imul ax, N
     add al, byte [column]  ; suma la columna
-    mov edi, eax
+    movzx edi, ax
+    pop ax
 	ret
 
 ; Calcula la posición en el array y le asigna el valor de CL
@@ -154,68 +158,69 @@ is_player_token:
 ; * @return points Se actualiza los puntos de los jugadores
 ; */
 calculate_valid_moves:
-mov byte [row], 0x0
-mov byte [column], 0x0
-mov ecx, BOARD_SIZE         ; Contador i = 64
-lea si, board
+    mov byte [row],     0x0
+    mov byte [column],  0x0
+    lea esi, board              ; Iterador del tablero
 ; Recorre el tablero
-valid_moves_loop_i:
-push ecx                    ; Guarda i (ECX)
-mov al, byte [player]
-cmpsb                       ; Compara el contenido al que apunta SI con AL, e incrementa SI
-jne no_player_token
-mov ecx, N                  ; j = 8 (cambiar en caso de N!=8)
-mov al, byte [row]
-mov ah, byte [column]
-look_in_all_directions:     ; Búsqueda en las 8 direcciones
-push ax                     ; Guarda la fila y la columna
-mov ebx, N
-sub ebx, ecx                
-shl ebx, 1                  ; Calcula el índice para obtener la sig. dir. ((8-ECX)*2)
-mov ax, word [DIRECTION + ebx]
+valid_moves_loop:
+    lodsb                       ; Carga el valor del tablero donde punta SI en AL, e incrementa SI
+    cmp al, byte [player]       ; Compara AL (pos. en tablero) con el jugador en turno
+    jne no_player_token         ; Si no es igual, continua a la siguiente celda de memoria
+    mov ecx, N                  ; j = 8 (Direcciones de busqueda)
+    mov al, byte [row]          ; AL = fila
+    mov ah, byte [column]       ; AH = columna
+; Busqueda en las 8 direcciones
+explore_directions_loop:
+    push ax                     ; Guarda la fila y la columna en pila
+    mov ebx, N
+    sub ebx, ecx          
+    shl ebx, 1                      ; Indice j para explorar las 8 direcciones (EBX = (8-ECX)*2)
+    mov ax, word [DIRECTION + ebx]  ; Guarda la coordenada relativa a la que se desplazara
+    mov byte [othr_p_tokn], 0x0     ; Limpia la bandera para saber si hay fichas del oponente en esa dir.
 find_move:
-; Mueve la fila y la columna en la direccion indicada
-add byte [row], al
-add byte [column], ah
-; Valida los limites del tablero
-cmp byte [row], N
-ja no_move
-cmp byte [column], N
-ja no_move
-; Compara el valor del tablero i, j con el de el jugador
-call calculate_relative_index
-mov bl, byte [board + edi]
-cmp bl, byte [player]
-je no_move                  ; Si la ficha pertenece al jugador, la jugada no es válida
-cmp byte [board + edi], 0x0
-jne opponent_token_found
-cmp byte [othr_p_tokn], 1
-; Si la celda está vacía y ficha de oponente (othr_p_tokn) = 1, jugada válida, marcamos
-jmp valid_move
-; En caso contrario "ficha del oponente" = 1 y continuamos en esa dirección
+    ; Mueve la fila y la columna en la direccion relativa de AX
+    add byte [row],     al
+    add byte [column],  ah
+    ; Valida los limites del tablero
+    cmp byte [row], N
+    ja no_move
+    cmp byte [column], N
+    ja no_move
+    ; Compara el valor del tablero i, j con el de el jugador
+    call calculate_relative_index
+    mov bl, byte [board + edi]
+    cmp bl, byte [player]
+    je no_move                  ; Si la ficha pertenece al jugador, la jugada no es valida
+    cmp byte [board + edi], 0x0
+    jne opponent_token_found    ; Si la casilla no esta libre, activa la banderilla othr_p_tokn
+    cmp byte [othr_p_tokn], 1
+    je valid_move               ; Si la casilla esta vacia y othr_p_tokn == 1, jugada valida
+    jmp no_move                 ; Casilla vacia adyacente a la ficha del jugador, jugada no valida
 opponent_token_found:
-mov byte [othr_p_tokn], 0x1
-jmp find_move
+    mov byte [othr_p_tokn], 0x1 ; Activa la banderilla othr_p_tokn
+    jmp find_move               ; Sigue buscando en esa direccion
 valid_move:
-loop valid_moves_loop_i ; !!! MOVER O Reestructurar debido a out of bounds jump!!
-mov byte [othr_p_tokn], 0x0
-mov byte [board + edi], 0x3
+    mov byte [board + edi], 0x3 ; Marca la jugada valida en el tablero
 no_move:
-pop ax                      ; Restaura la fila y la columna
-mov byte [row], al
-mov byte [column], ah
-loop look_in_all_directions
-
+    pop ax                      ; Restaura la fila y la columna
+    mov byte [row],     al
+    mov byte [column],  ah
+    loop explore_directions_loop; Sigue buscando en las otras direcciones
 no_player_token:
-inc byte [column]           ; Incrementa la columna
-cmp byte [column], 8
-jb no_adjust                ; Ajusta la fila y la columna en caso de desborde
-inc byte [row]              
-mov byte [column], 0
+    inc byte [column]           ; Incrementa la columna
+    cmp byte [column], 8
+    jb no_adjust
+    inc byte [row]              
+    mov byte [column], 0        ; Ajusta la fila y la columna en caso de desborde
 no_adjust:
-pop ecx                     ; Restaura i (ECX)
-pop ax
-;!!! AQUÍ va el jump que presenta error debido a que es un saldo demasiado lejos de su etiqueta
+    lea ecx, board
+    push esi                        ; Guarda el valor de ESI en la pila
+    sub esi, ecx
+    cmp esi, BOARD_SIZE
+    je valid_moves_loop_end         ; Finaliza el loop si (ESI - board) == BOARD_SIZE
+    pop esi                         ; Recupera el valor de ESI de la pila
+    jmp valid_moves_loop
+valid_moves_loop_end:
     ret
 
 validate_move:
