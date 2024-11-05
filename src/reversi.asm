@@ -5,7 +5,7 @@ section .data
     BOARD_SIZE          equ N*N             ; Tamaño total de tablero 8 filas x 8 columnas
     P_ONE_MASK          equ 0x01            ; Mascara del bit jugador 1
     P_TWO_MASK          equ 0x02            ; Mascara del bit jugador 2
-    P_INV_MASK          equ 0x03            ; Mascara para inversion de primeros 2 bits
+    P_BIT_MASK          equ 0x03            ; Mascara para operaciones con primeros 2 bits
     P_OFF_MASK          equ 0x04            ; Mascara del bit asociado a oponente encontrado
     P_V_M_MARK          equ 0x03            ; Marca (valor) que representa una movida valida
     C_SEPARATOR         equ '|'             ; Separador de columnas
@@ -21,7 +21,7 @@ section .data
                         db  0x01, 0x00      ; Sur        1,  0
                         db  0x01, 0x01      ; Sureste    1,  1
 
-    msg_points          db 'PUNTOS'
+    msg_points          db 'PUNTOS -> J1:J2:'
     msg_points_len      equ $ - msg_points
 	msg_input           db 'Ingrese la fila "F" y la columa "C" en el formato "FC".', LINE_FEED
     msg_input_len       equ $ - msg_input
@@ -30,6 +30,7 @@ section .data
 
 section .bss
     buffer      resb  BUFFER_LENGTH ; Reserva 512B en mem. para el buffer de IO
+    buffer_aux  resb  N             ; Reserva 8B en mem. para el buffer auxiliar
     board       resb  BOARD_SIZE    ; Reserva mem. en memoria para el tablero (8x8 = 64 bytes)
     global row
     row         resb  1             ; Almacena el valor de la fila a la cual accesar (1 byte)
@@ -45,17 +46,17 @@ section .bss
 
 section .text
 ; Declaracion de variables globales
-    global _start
+    global _start                   ; NOTA: Al momento de implementar la interfaz de debe comentar esta linea para evitar conflictos de nombres al compilar
     global init
     global change_player
     global set_token
     global mark_valid_moves
     global unmark_valid_moves
+    global player_has_moves
     global validate_move
     global flank
     global update_points
-
-
+    global is_game_over
 
 ; Punto de entrada del programa
 _start:
@@ -64,6 +65,10 @@ loop_start:
     ; Dibujado e impresion del tablero
     call clear_console
     call mark_valid_moves
+    call player_has_moves
+    test eax, eax                   ; Verifica si eax tiene un valor distinto de cero
+    jz  no_moves                    ; El jugador no tiene movidas
+user_input:
     call draw_board
     lea ecx, buffer                 ; Buffer de salida (largo en EDX dado por la funcion draw_board)
     call print                      ; Imprime el buffer
@@ -75,34 +80,39 @@ loop_start:
     call read_input
     call validate_input             ; Resultado en EAX
     test eax, eax                   ; Verifica el la salida de validate_input
-    jz loop_start                   ;
+    jz user_input                   ;
 
     call convert_coords_to_index    ; Retorna en EAX
     mov edi, eax                    ; Pasa el indice a EDI para la fun. "set_token".
     ; Validar jugada basado en las marcas de la funcion "mark_valid_moves"
     call validate_move
-    call unmark_valid_moves
+    test eax, eax
+    jz user_input
     call set_token
     call flank
-    call change_player
     call update_points
+    call unmark_valid_moves
+no_moves:
+    call is_game_over
+    test eax, eax
+    jnz game_over
+    call change_player
     jmp loop_start
 game_over:
     ;Salida
     jmp _exit
 
 ;   Descripcion:
-;    Inicializa el tablero y las variables del jugador
+;    Inicializa el tablero y otras variables esenciales para el juego
 ;   Parametros:
-;    player - [in] indica el jugador en turno
-;   Retorno:
-;    board - incluye marcadas con x todas las jugadas validas
+;    player - [out] indica el jugador en turno
+;    board - [out] tablero del juego, se colocan las fichas iniciales
 init:
     ; Limpieza del tablero
-    lea edi, board                  ; Arreglo que recorrera STOSB = puntero al tablero
-    mov ecx, BOARD_SIZE             ; Contador para REP = tamaño del array
-    xor al, al                      ; Valor a asignar = 0 (AL = 0)
-    rep stosb                       ; Copia AL en cada celda del tablero
+    lea edi, board                      ; Arreglo que recorrera STOSB = puntero al tablero
+    mov ecx, BOARD_SIZE                 ; Contador para REP = tamaño del array
+    xor al, al                          ; Valor a asignar = 0 (AL = 0)
+    rep stosb                           ; Copia AL en cada celda del tablero
     ; Colocar fichas centrales
     mov byte [board + 0x1C], P_TWO_MASK
     mov byte [board + 0x1B], P_ONE_MASK
@@ -115,14 +125,23 @@ init:
     mov word [points],      0x0202      ; Puntos J1 = Puntos J2 = 2
     ret
 
-; Cambio de jugador (REQ: player = 0x01 | player = 0x02)
+;   Descripcion:
+;     Se encarga de cambiar al jugador en turno
+;   Parametros:
+;     player - [out] jugador en turno
+;       J1 - 0x01 (P_ONE_MASK)
+;       J2 - 0x02 (P_TWO_MASK)
 change_player:
     mov al, [player]
-    xor al, P_INV_MASK              ; Mascara para invertir valores de los primeros 2 bits
+    xor al, P_BIT_MASK              ; Mascara para invertir valores de los primeros 2 bits
     mov [player], al
 	ret
 
-; Coloca la ficha del jugador en la posicion del tablero indicada por EDI
+;   Descripcion:
+;     Coloca la ficha del jugador en la posicion del tablero indicada por EDI
+;   Parametros:
+;     EDI - [in] indice (no confundir indice con puntero) del tablero donde se desea colocar la ficha
+;     player - [out] jugador en turno
 set_token:
     mov al, [player]
     mov [board + edi], al
@@ -222,7 +241,7 @@ find_opponent_token_loop:
     add edi, ebx                    ; EDI = (board + AL*8) + AH (ficha en la direccion indicada)
 ; Si es ficha oponente, marca la banderilla de oponente encontrado y avanza en esa direccion    
     mov bl, byte [player]
-    xor bl, P_INV_MASK              ; BL = oponente
+    xor bl, P_BIT_MASK              ; BL = oponente
     cmp bl, byte [edi]              ; Verifica que la ficha a la que apunta EDI sea del oponente 
     jne no_opp_found
     or  byte [game_flags], P_OFF_MASK; Marca la banderilla del oponente
@@ -295,7 +314,7 @@ verify_board_bounds:
 ;     board - tablero devuelto a su estado sin marcas de jugadas validas
 unmark_valid_moves:
     lea esi, board                  ; Iterador del tablero
-    mov ecx, BOARD_SIZE - 1         ; Indice del loop
+    mov ecx, BOARD_SIZE             ; Contador del loop
 unmark_valid_moves_loop:
     lodsb                           ; Carga el valor al que apunta ESI en AL y avanza a la sig. pos. de mem.
     cmp al, P_V_M_MARK              ; Compara la ficha del tablero con la mascara (0x03)
@@ -303,6 +322,22 @@ unmark_valid_moves_loop:
     mov byte [esi - 1], 0x0         ; Sobreescribe el valor en [ESI - 1]
 no_mark:
     loop unmark_valid_moves_loop    ; (ECX == 0)? sig. inst. : ECX-- & jump etiqueta
+    ret
+
+;   Descripcion:
+;     Valida si el jugador en turno tiene movidas y actualiza EAX en consecuencia
+;   Parametros:
+;     player - [in] jugador en turno
+;     game_flags - [in] banderillas de estado del juego
+;   Retorno:
+;     EAX - booleano referente a las movidas del jugador
+;   Advertencia:
+;     Esta funcion require que anteriormente se hayan actualizado las game_flags
+;     es decir, que se haya ejecutado de manera previa la funcion mark_valid_moves
+
+player_has_moves:
+    movzx eax, byte [player]
+    and al, byte [game_flags]
     ret
 
 ;   Descripcion:
@@ -314,7 +349,7 @@ no_mark:
 validate_move:
     cmp byte [board + edi], P_V_M_MARK
     jne invalid_move
-    mov eax, 0x0
+    mov eax, 0x1
     ret
 invalid_move:
     xor eax, eax
@@ -374,8 +409,11 @@ flank_end:
 
 ;   Descripcion:
 ;     Recorre el tablero y suma los puntos en la variable "points"
+;   Parametros:
+;     points - [out] arreglo donde se suman los puntos de ambos jugadores
 update_points:
     mov ecx, BOARD_SIZE - 1
+    mov word [points], 0x0          ; Resetea los puntos para iniciar la cuenta
 update_points_loop:
     mov al, [board + ecx]           ; Mueve la ficha accesada a AL
     cmp al, P_ONE_MASK              ; Verifica si pertenece al J1
@@ -391,6 +429,30 @@ add_pts_p_two:
 no_addition:
     loop update_points_loop
 	ret
+
+;   Descripcion:
+;     Comprueba las banderillas de estado y la cantidad de puntos totales de ambos jugadores
+;     para definir el estado del juego
+;   Parametros:
+;     game_flags - [in] banderillas de estado del juego
+;     points - [in] arreglo que contiene los puntos de ambos jugadores
+;   Retorno:
+;     EAX - booleano que indica si el juego ha conluido
+;   Advertencia:
+;     Esta funcion require que anteriormente se hayan actualizado las game_flags y los puntos
+;     es decir, que se hayan ejecutado de manera previa las funciones mark_valid_moves y update_points
+is_game_over:
+    test byte [game_flags], P_BIT_MASK  ; Compara si ambos jugadores tienen movidas validas
+    jz game_is_over
+    mov ax, [points]                ; Mueve los puntos de ambos jugadores 
+    add al, ah                      ; Acumula el total de puntos
+    cmp al, BOARD_SIZE              ; Los compara con la cantidad de casillas del tablero
+    je game_is_over
+    xor eax, eax                    ; Ninguna condicion de fin de juego encontrada, retorna 0
+    ret
+game_is_over:
+    mov eax, 0x1                    ; Alguna de las 2 condiciones de juego finalizado encontradas, retorna 1
+    ret
 
 ;   Descripcion:
 ;     Recibe mediante la entrada estandar (stdin) los datos que ingrese el usuario.
@@ -485,22 +547,73 @@ draw_loop_k:
     mov al, ' '
     stosb                           ; Concatenar espacio
     mov al, 'I'
-    sub al, cl                      ; AL = 'I' - index k
+    sub al, cl                      ; AL = ('I' - ECX)
     stosb                           ; Concatenar caracter en AL
     loop draw_loop_k        
     mov al, LINE_FEED
     stosb                           ; Concatenar salto de linea
 
-;    << TODO: >>
-;       CONCATENAR LOS PUNTOS DE CADA JUGADOR
-;    << /TODO >>
+    lea esi, msg_points
+    mov ecx, msg_points_len
+concat_pts_loop:
+    lodsb
+    cmp al, ':'
+    jne concat_pts_msg
+    stosb
+    cmp ecx, 0x1                    ; Compara para saber si llego al final de la cadena
+    je load_p_two_pts
+    movzx eax, byte[points]         ; Si no ha llegado, carga los puntos del J1
+    jmp concat_pts
+load_p_two_pts:
+    movzx eax, byte[points + 1]     ; Carga los puntos del J2
+concat_pts:
+    push esi                        ; Guarda el puntero al mensaje
+    push edi                        ; Guarda el puntero al buffer principal
+    lea esi, buffer_aux
+
+; Convierte un entero a una cadena de caracteres (REQ: eax = n, esi = buffer)
+; NOTA: Reciclado de asm_calc_b93699
+int_to_str:
+    mov edi, 0x0A           ; Divisor x10 para extraer digitos del numero
+    lea esi, [esi + (N - 1)]; Apunta ESI al final del buffer (8 bytes)
+    mov byte [esi], 0       ; Termina la cadena con NUL
+    dec esi                 ; Ajusta ESI para empezar a transcribir los digitos
+
+loop_i_t_s:
+    xor edx, edx            ; Limpiar EDX antes de la division
+    div edi                 ; Divide EAX entre 10, EAX = cociente, EDX = residuo
+    add dl, '0'             ; Agrega '0' (0x30) al digito para convertirlo en caracter
+    mov [esi], dl           ; Guardar el caracter en el buffer
+    dec esi                 ; base--
+    test eax, eax           ; Verifica si el cociente es 0
+    jnz loop_i_t_s          ; De lo contrario continua el loop
+    inc esi                 ; Ajusta ESI para que apunte al inicio de la cadena
+
+    pop edi                 ; Recupera el puntero al buffer principal
+copy_points_to_buffer:
+    lodsb
+    cmp al, 0x0             ; Verifica que no sea el final de la cadena
+    je restore_pts_msg_ptr
+    stosb
+    jmp copy_points_to_buffer
+restore_pts_msg_ptr:
+    pop esi                 ; Restaura el puntero a msg_points
+    mov al, ' '
+    stosb                           ; Concatenar espacio
+    jmp points_copied
+concat_pts_msg:
+    stosb
+points_copied:
+    loop concat_pts_loop
+    mov al, LINE_FEED
+    stosb                           ; Concatenar salto de linea
 
     mov edx, edi                    ; Mueve la ultima_dir.+1 sobre la cual se escribio en el buffer
     sub edx, buffer                 ; Resta primer - ultima dir.+1 para obtener la cant. de caracteres escritos
     ret
 
 ;   Descripcion:
-;    Imprime la cantidad de caracteres solicitados, situados en el buffer proveido en ECX
+;    Imprime la cantidad de caracteres solicitados, situados en el buffer al que apunta ECX
 ;   Parametros:
 ;    ECX - [in] un puntero al buffer de salida
 ;    EDX - [in] cantidad de caracteres a imprimir
