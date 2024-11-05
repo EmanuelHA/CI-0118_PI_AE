@@ -1,16 +1,16 @@
 section .data
     CLR_SCREEN_CMD      db  0x1B, '[2J'     ; Codigo de escape ANSI para limpiar la consola
     BUFFER_LENGTH       equ 512             ; Tamaño del buffer de entrada/salida
-    N                   equ 8               ; Cantidad de filas = cantidad de columnas = 8
+    N                   equ 8               ; Rango de filas, columnas y direcciones de desplazamiento
     BOARD_SIZE          equ N*N             ; Tamaño total de tablero 8 filas x 8 columnas
     P_ONE_MASK          equ 0x01            ; Mascara del bit jugador 1
     P_TWO_MASK          equ 0x02            ; Mascara del bit jugador 2
     P_INV_MASK          equ 0x03            ; Mascara para inversion de primeros 2 bits
-    P_OPP_MASK          equ 0x04            ; Mascara del bit asociado a oponente encontrado
+    P_OFF_MASK          equ 0x04            ; Mascara del bit asociado a oponente encontrado
     P_V_M_MARK          equ 0x03            ; Marca (valor) que representa una movida valida
     C_SEPARATOR         equ '|'             ; Separador de columnas
-    R_SEPARATOR         equ '-'             ; Separador de columnas
-	LINE_FEED           equ 0x0A            ; Nueva linea
+    R_SEPARATOR         equ '-'             ; Separador de filas
+	LINE_FEED           equ 0x0A            ; Codigo ASCII - nueva linea
     DIRECTION           db  0xFF, 0xFF      ; Noroeste  -1, -1
                         db  0xFF, 0x00      ; Norte     -1,  0
                         db  0xFF, 0x01      ; Noreste   -1,  1
@@ -31,17 +31,30 @@ section .data
 section .bss
     buffer      resb  BUFFER_LENGTH ; Reserva 512B en mem. para el buffer de IO
     board       resb  BOARD_SIZE    ; Reserva mem. en memoria para el tablero (8x8 = 64 bytes)
-    row         resb  1             ; Almacena el valor de la fila a la cual accesar (1 byte)   (NOTA: no separar de column)(ver ref.1)
-    column      resb  1             ; Almacena el valor de la columna a la cual accesar (1 byte)(NOTA: no separar de row)
+    global row
+    row         resb  1             ; Almacena el valor de la fila a la cual accesar (1 byte)
+    global column
+    column      resb  1             ; Almacena el valor de la columna a la cual accesar (1 byte)
     global player
     player      resb  1             ; ID de jugador en turno. J1 = fichas negras, J2 = fichas blancas
     global game_flags
-    game_flags  resb  1             ; GFLAGS: [bit_3, bit_2, bit_1] = [opponente encontrado en flanqueo, J2 tiene movidas, J1 tiene movidas] 
+    game_flags  resb  1             ; GFLAGS: [bit3, bit2, bit1] =
+                                    ; [opponente encontrado en flanqueo (OFF), J2 tiene movidas (PTM), J1 tiene movidas (POM)] 
     global points
     points      resb  2             ; [points + 0] = puntos J1, [points + 1] = puntos J2
 
 section .text
+; Declaracion de variables globales
     global _start
+    global init
+    global change_player
+    global set_token
+    global mark_valid_moves
+    global unmark_valid_moves
+    global validate_move
+    global flank
+    global update_points
+
 
 
 ; Punto de entrada del programa
@@ -70,8 +83,8 @@ loop_start:
     call validate_move
     call unmark_valid_moves
     call set_token
-    call change_player
     call flank
+    call change_player
     call update_points
     jmp loop_start
 game_over:
@@ -109,11 +122,21 @@ change_player:
     mov [player], al
 	ret
 
-; Coloca la ficha del jugador en la posicion del tablero indicada
+; Coloca la ficha del jugador en la posicion del tablero indicada por EDI
 set_token:
     mov al, [player]
     mov [board + edi], al
 	ret
+
+;   Descripcion:
+;     Mueve los 8 bits menos significativos de ESI en la posicion indicada
+;   Parametros:
+;     EDI - [in] indice para accesar a la posicion de memoria [board + EDI]
+;     ESI - [in] valor a asignar en la posicion de memoria indicada
+set_value:
+    mov eax, esi
+    mov byte [board + edi], al      ; Asigna el valor
+    ret
 
 ;   Descripcion:
 ;     Dadas una fila y columna validas, calcula un indice de desplazamiento para el tablero
@@ -147,16 +170,64 @@ convert_index_to_coords:
     mov byte [column], dl           ; DL = residuo = columna
     ret
 
-; Calcula la posicion en el tablero y le asigna el valor de CL
-set_value:
+;   Descripcion:
+;     Calcula la posicion en el tablero apartir de la funcion convert_coords_to_index
+;     y retorna el valor en el indice calculado apartir de row y column
+;   Parametros:
+;     row - [in] usado en el calculo del indice
+;       0 ≤ row < N
+;     column - [in] usado en el calculo del indice
+;       0 ≤ column < N
+;   Retorno:
+;     EAX - contiene el caracter situado en la posicion de memora solicitada
+get_value_in_coords:
     call convert_coords_to_index
-    mov [board + edi], cl   ; asigna el valor
+    movzx eax, byte [board + edi]
     ret
 
-; Calcula la posicion en el tablero y retorna el contenido en AX
-get_value:
-    call convert_coords_to_index
-    mov al, byte [board + edi]
+;   Descripcion:
+;     Se desplaza en la direccion indicada (comenzando en "row", "column") y
+;     verifica que solo se encuentren fichas del oponente en esa direccion.
+;     Una vez verificado, procede a actualizar el bit asociado las game_flags (OFF);
+;     retorna en EDI la dir. en mem. asociada a la ultima casilla del tablero visitada
+;   Parametros:
+;     ECX - [in] Contiene la direccion del desplazamiento
+;       0 ≤ ECX < N
+;     row - [in] Contiene la fila de partida
+;       0 ≤ row < N
+;     column - [in] Contiene la columna de partida
+;       0 ≤ column < N
+;   Retorno:
+;     EDI - direccion asociada a la ultima casilla del tablero visitada
+find_opponent_token:
+; Desmarca la banderilla del oponente
+    mov al, P_OFF_MASK
+    not al
+    and byte [game_flags], al
+; Carga la dir. en la que se desplazara AX (AL - fila, AH - columna)
+    mov al, [row]                   ; Mueve fila i-esima a AL
+    mov ah, [column]                ; Mueve columna j-esima a AH
+find_opponent_token_loop:
+    add al, byte [DIRECTION + ecx * 2]      ; ROW + DIR[2*ECX+0](X)
+    add ah, byte [DIRECTION + ecx * 2 + 1]  ; COL + DIR[2*ECX+1](Y)
+; Validacion de limites del tablero
+    cmp al, N
+    jae no_opp_found                ; Salta si NO se cumple que 0 ≤ AL < N
+    cmp ah, N
+    jae no_opp_found                ; Salta si NO se cumple que 0 ≤ AH < N
+; Calculo de desplazamiento en el tablero a partir de AL(i), AH(j)
+    movzx edi, al
+    lea edi, [board + edi * N]
+    movzx ebx, ah
+    add edi, ebx                    ; EDI = (board + AL*8) + AH (ficha en la direccion indicada)
+; Si es ficha oponente, marca la banderilla de oponente encontrado y avanza en esa direccion    
+    mov bl, byte [player]
+    xor bl, P_INV_MASK              ; BL = oponente
+    cmp bl, byte [edi]              ; Verifica que la ficha a la que apunta EDI sea del oponente 
+    jne no_opp_found
+    or  byte [game_flags], P_OFF_MASK; Marca la banderilla del oponente
+    jmp find_opponent_token_loop    ; Continua recorriendo ese camino
+no_opp_found:
     ret
 
 ;   Descripcion:
@@ -165,14 +236,14 @@ get_value:
 ;     player - [in] jugador en turno
 ;   Retorno:
 ;     board - incluye todas las jugadas validas marcadas (P_V_M_MARK)
-;     game_flags - se actualiza la banderilla que representa si el jugador actual tiene movidas
+;     game_flags - se actualiza la banderilla que indica si el jugador actual tiene movidas (POM o PTM)
 mark_valid_moves:
     push ebx                        ; Guarda EBX (segun ABI)
     lea esi, board                  ; Iterador del tablero
     mov al, byte [player]
     not al
     and  byte [game_flags], al      ; Asume que el jugador no tiene movidas (limpia la banderilla asociada)
-mark_v_m_loop:
+mark_valid_moves_loop:
     lodsb                           ; Carga el valor en AL que apunta ESI e incrementa ESI
     cmp al, byte [player]                ; Verfica si es una ficha del jugador en turno
     jne verify_board_bounds         ; Salta si no es una fichar
@@ -180,61 +251,40 @@ mark_v_m_loop:
 ; Verifica las jugadas en todas las direcciones
     lea edi, [esi - 1]              ; Carga la dir. de mem. de ESI - 1 (ficha del jugador) 
     sub edi, board                  ; EDI = ESI - board (indice)
-    call convert_index_to_coords    ; Calcula fila y columna a partir de ESI - board
-    mov ecx, N - 1                  ; Indice de direcciones (contador) ECX = 8 - 1
+    call convert_index_to_coords    ; Calcula fila y columna a partir de EDI (para llamar a find_opponent_token)
+    mov ecx, N - 1                  ; Indice de direcciones (contador) ECX = N
 explore_directions_loop:
-    mov al, [row]                   ; Mueve fila i-esima a AL
-    mov ah, [column]                ; Mueve columna j-esima a AH
-; Desplazamiento en la dir. indicada
-find_move:
-    add al, byte [DIRECTION + ecx * 2]      ; ROW + DIR[2*ECX+0](X)
-    add ah, byte [DIRECTION + ecx * 2 + 1]  ; COL + DIR[2*ECX+1](Y)
-; Validacion de limites del tablero
-    cmp al, N
-    jae no_move                     ; Salta si NO se cumple que 0 ≤ AL < N
-    cmp ah, N
-    jae no_move                     ; Salta si NO se cumple que 0 ≤ AH < N
-; Calculo de desplazamiento en el tablero a partir de AL(i), AH(j)
-    movzx edi, al
-    lea edi, [board + edi * N]
-    movzx ebx, ah
-    add edi, ebx                    ; EDI = (board + AL*8) + AH (ficha en la direccion indicada)
+    call find_opponent_token        ; Desplazamiento en la dir. indicada por ECX y actualizacion de game_flags
 
-; Comparaciones para validar la jugada
+; Comparaciones para validar la jugada (ultima celda visitada en EDI, game_flag OFF actializada)
 
-; Si es ficha oponente, marca la banderilla de oponente encontrado y avanza en esa direccion    
-    mov bl, byte [player]
-    xor bl, P_INV_MASK              ; BL = oponente
-    cmp bl, byte [edi]              ; Verifica que la ficha a la que apunta EDI sea del oponente 
-    jne no_opp_found
-    or  byte [game_flags], P_OPP_MASK; Marca la banderilla del oponente
-    jmp find_move                   ; Continua recorriendo ese camino
-no_opp_found:
-; Si es celda vacia, revisa la banderilla de oponente encontrado
-; game_flags | P_OPP_MASK (extrae el tercer bit de game_flags)
-; Si el bit == 1 -> jugada valida, marca. Si no bit == 0 -> jugada no valida, siguiente direccion
+; Si encontro al oponente en esa direcion (OFF == 1) varifica que la ultima celda que se visito este vacia
+; en caso de estar vacia se considera una movida valida, por lo que marca la celda
+    mov bl, byte [game_flags]
+    test bl, P_OFF_MASK             ; Verifica el estado del bit oponente encontrado (OFF) en game_flags
+    jz  no_move
     mov bl, byte [edi]
     cmp bl, 0x0
     jne no_move
-    mov bl, byte [game_flags]
-    test bl, P_OPP_MASK
-    jz  no_move
     mov byte [edi], P_V_M_MARK      ; Marca la celda como movida valida
     mov al, byte [player]
     or  byte [game_flags], al       ; Marca la banderilla asociada a representar si el jugador tiene movidas
-; En cualquier otro caso, jugada no valida, siguiente movida
+; En cualquier otro caso, jugada no valida, avanza en la sig. dir.
 no_move:
-    mov al, P_OPP_MASK
+    mov al, P_OFF_MASK
     not al
     and byte [game_flags], al       ; Desmarca la banderilla del oponente
-    loop explore_directions_loop    ; (ECX == 0)? sig. inst : ECX-- & jmp loop
-
+; (ECX == 0)? sig. inst : ECX-- & jmp loop
+    cmp ecx, 0x0
+    je verify_board_bounds
+    dec ecx
+    jmp explore_directions_loop
 verify_board_bounds:
     lea eax, board
     sub eax, esi
     neg eax                         ; EAX = -(board - ESI)
     cmp eax, BOARD_SIZE       
-    jl  mark_v_m_loop               ; Si indice ≤ BOARD_SIZE sigue recorriendo el tablero
+    jl  mark_valid_moves_loop       ; Si ESI - board (indice) ≤ BOARD_SIZE sigue recorriendo el tablero
     
     pop ebx                         ; Restaura EBX (ABI)
     ret
@@ -271,14 +321,55 @@ invalid_move:
     ret
 
 ;   Descripcion:
-;     Busca un flaqueo valido desde la posicion en EDI en todas las direcciones
+;     Busca un flaqueo valido desde la posicion dada en cada una de las direcciones
 ;     una vez encontrado, flanquea en esa direccion y pasa a la siguiente direccion
 ;   Parametros:
-;     EDI - [in] recibe el indice desde el cual hara el flanqueo
+;     row - [in] Contiene la fila de partida
+;       0 ≤ row < N
+;     column - [in] Contiene la columna de partida
+;       0 ≤ column < N
+;     player [in] jugador en turno
+;       player = {P_ONE_MASK, P_TWO_MASK}
 ;   Retorno:
-;     board - para
+;     board - pasa a contener la jugada realizada, es decir las fichas volteadas
 flank:
-
+    push ebx                        ; Guarda EBX (segun ABI)
+    mov ecx, N - 1                  ; Indice para hacer el recorrido en todas las direcciones
+flank_directions_loop:
+    call find_opponent_token
+; Si encontro al oponente en esa direcion (OFF == 1) varifica que la ultima celda que se visito sea del jugador
+; en caso de pertenecer al jugador es un flanqueo valido, por lo que procede a voltear las fichas del oponente
+    mov bl, byte [game_flags]
+    test bl, P_OFF_MASK             ; Verifica el estado del bit oponente encontrado (OFF) en game_flags
+    jz  no_flank
+    mov bl, byte [edi]
+    cmp bl, byte [player]
+    jne no_flank
+    ; Carga la dir. en la que se desplazara AX (AL - fila, AH - columna)
+    mov al, [row]                   ; Mueve fila i-esima a AL
+    mov ah, [column]                ; Mueve columna j-esima a AH
+flank_loop:
+    ; Convertir coords a index
+    movzx edx, al
+    imul ebx, edx, N
+    add bl, ah                      ; BX = AL*N + AH = indice
+    add ebx, board                  ; EBX = board + indice
+    ; Comparar los punteros ebx y edi para verificar si se llego al destino
+    cmp ebx, edi
+    je no_flank
+    ; Coloca una ficha del jugador en la posicion iterada y avanza a la siguiente posicion
+    mov dl, byte [player]
+    mov byte [ebx], dl
+    add al, byte [DIRECTION + ecx * 2]      ; ROW + DIR[2*ECX+0](X)
+    add ah, byte [DIRECTION + ecx * 2 + 1]  ; COL + DIR[2*ECX+1](Y)
+    jmp flank_loop
+no_flank:
+    cmp ecx, 0x0
+    je flank_end
+    dec ecx
+    jmp flank_directions_loop
+flank_end:
+    pop ebx                         ; Restaura EBX (ABI)
 	ret
 
 ;   Descripcion:
@@ -286,12 +377,12 @@ flank:
 update_points:
     mov ecx, BOARD_SIZE - 1
 update_points_loop:
-    mov al, [board + ecx]
-    cmp al, P_ONE_MASK
+    mov al, [board + ecx]           ; Mueve la ficha accesada a AL
+    cmp al, P_ONE_MASK              ; Verifica si pertenece al J1
     je add_pts_p_one
-    cmp al, P_TWO_MASK
+    cmp al, P_TWO_MASK              ; Verifica si pertenece al J2
     je add_pts_p_two
-    jmp no_addition
+    jmp no_addition                 ; No es ficha de ningun jugador (celda vacia o marcada)
 add_pts_p_one:
     inc byte [points]
     jmp no_addition
@@ -402,7 +493,7 @@ draw_loop_k:
 
 ;    << TODO: >>
 ;       CONCATENAR LOS PUNTOS DE CADA JUGADOR
-;    << /TODO >> 
+;    << /TODO >>
 
     mov edx, edi                    ; Mueve la ultima_dir.+1 sobre la cual se escribio en el buffer
     sub edx, buffer                 ; Resta primer - ultima dir.+1 para obtener la cant. de caracteres escritos
@@ -430,6 +521,6 @@ clear_console:      ; Limpia la consola
 
 
 _exit:              ; Salida normal del programa
-    mov eax, 0x1            ; Llamada al sistema: salida del proceso
-    mov ebx, 0x0            ; Codigo de salida normal
+    mov eax, 0x1                    ; Llamada al sistema: salida del proceso
+    mov ebx, 0x0                    ; Codigo de salida normal
     int 0x80
