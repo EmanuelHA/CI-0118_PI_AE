@@ -1,33 +1,41 @@
-# Makefile para ensamblar reversi.asm
+# Compilador C + banderillas
+CC = gcc
+C_FLAGS = -c
+LD_FLAGS = -no-pie -z noexecstack
+# Compilador S + banderillas
+ASM = nasm
+ASM_FLAGS = -f elf64
+# Bamderillas de GTK
+GTK_FLAGS = `pkg-config --cflags gtk4`
+GTK_LIBS = `pkg-config --libs gtk4`
+# Archivos fuente
+C_SRC = src/main.c
+ASM_SRC = src/reversi.asm
+# Archivos objeto
+C_OBJ = $(C_SRC:.c=.o)
+ASM_OBJ = $(ASM_SRC:.asm=.o)
+# Salida
+TARGET = reversi
 
-# Nombre del archivo fuente y de salida
-ASM_FILE = src/reversi.asm
-OBJ_FILE = reversi.o
-EXEC_FILE = reversi
+# Regla predeterminada
+all: $(TARGET)
 
-# Comando para ensamblar
-ASSEMBLER = nasm
-LINKER = ld
+# Regla para ejecutar el programa
+run:
+	./$(TARGET)
 
-# Opciones de ensamblado
-ASM_FLAGS = -f elf32
-LINKER_FLAGS = -m elf_i386
+# Enlazar el programa
+$(TARGET): $(C_OBJ) $(ASM_OBJ)
+	$(CC) $(C_OBJ) $(ASM_OBJ) $(LD_FLAGS) $(GTK_LIBS) -o $@
 
-# Regla por defecto
-all: $(EXEC_FILE)
+# Compilar .asm
+$(ASM_OBJ): $(ASM_SRC)
+	$(ASM) $(ASM_FLAGS) $< -o $@
 
-# Regla para correr el juego
-run: 
-	./$(EXEC_FILE)
+# Compilar .c
+$(C_OBJ): $(C_SRC) $(ASM_OBJ) 
+	$(CC) $(C_FLAGS) $(GTK_FLAGS) $< -o $@
 
-# Regla para crear el ejecutable ($< dependencias, $@ objetivo)
-$(EXEC_FILE): $(OBJ_FILE)
-	$(LINKER) $(LINKER_FLAGS) $< -o $@
-
-# Regla para ensamblar el archivo .asm
-$(OBJ_FILE): $(ASM_FILE)
-	$(ASSEMBLER) $(ASM_FLAGS) $< -o $@
-
-# Regla para limpiar los archivos generados
+# Limpiar archivos de salida
 clean:
-	rm -f $(OBJ_FILE) $(EXEC_FILE)
+	rm -f $(TARGET) $(C_OBJ) $(ASM_OBJ)

@@ -1,25 +1,28 @@
 #include <gtk/gtk.h>
+// Funciones de ensamblador
+    extern void init();
+    extern void change_player();
+    extern void set_token();
+    extern void mark_valid_moves();
+    extern void unmark_valid_moves();
+    extern bool player_has_moves();
+    extern bool validate_move();
+    extern void flank();
+    extern void update_points();
+    extern bool is_game_over();
 
 // Estado de cada celda en el tablero.
 typedef enum { EMPTY, BLACK, WHITE } CellState;
-CellState jugadorActual = BLACK;
+extern CellState player;
 
 // Call para el evento de clic en los botones del tablero.
 static void on_button_clicked(GtkButton *button, gpointer data) {
     CellState *estadoCelda = (CellState *)data;
 
     if (*estadoCelda == EMPTY) {
-        *estadoCelda = jugadorActual;
+        *estadoCelda = player;
         // Cambia el color del boton segun el jugador actual.
-        if (jugadorActual == BLACK) {
-            gtk_widget_add_css_class(GTK_WIDGET(button), "black"); // Agrega la clase "black" al boton.
-            gtk_widget_remove_css_class(GTK_WIDGET(button), "white"); // Quita la clase "white" del boton si esta presente.
-            jugadorActual = WHITE; // Cambia al jugador blanco.
-        } else {
-            gtk_widget_add_css_class(GTK_WIDGET(button), "white"); // Agrega la clase "white" al boton.
-            gtk_widget_remove_css_class(GTK_WIDGET(button), "black"); // Quita la clase "black" del boton si esta presente.
-            jugadorActual = BLACK; // Cambia al jugador negro.
-        }
+        change_player();
     }
 }
 

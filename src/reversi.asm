@@ -46,7 +46,7 @@ section .bss
 
 section .text
 ; Declaracion de variables globales
-    global _start                   ; NOTA: Al momento de implementar la interfaz de debe comentar esta linea para evitar conflictos de nombres al compilar
+    ;global _start                   ; NOTA: Al momento de implementar la interfaz de debe comentar esta linea para evitar conflictos de nombres al compilar
     global init
     global change_player
     global set_token
@@ -257,7 +257,7 @@ no_opp_found:
 ;     board - incluye todas las jugadas validas marcadas (P_V_M_MARK)
 ;     game_flags - se actualiza la banderilla que indica si el jugador actual tiene movidas (POM o PTM)
 mark_valid_moves:
-    push ebx                        ; Guarda EBX (segun ABI)
+    push rbx                        ; Guarda EBX (segun ABI)
     lea esi, board                  ; Iterador del tablero
     mov al, byte [player]
     not al
@@ -305,7 +305,7 @@ verify_board_bounds:
     cmp eax, BOARD_SIZE       
     jl  mark_valid_moves_loop       ; Si ESI - board (indice) ≤ BOARD_SIZE sigue recorriendo el tablero
     
-    pop ebx                         ; Restaura EBX (ABI)
+    pop rbx                         ; Restaura EBX (ABI)
     ret
 
 ;   Descripcion:
@@ -368,7 +368,7 @@ invalid_move:
 ;   Retorno:
 ;     board - pasa a contener la jugada realizada, es decir las fichas volteadas
 flank:
-    push ebx                        ; Guarda EBX (segun ABI)
+    push rbx                        ; Guarda EBX (segun ABI)
     mov ecx, N - 1                  ; Indice para hacer el recorrido en todas las direcciones
 flank_directions_loop:
     call find_opponent_token
@@ -404,7 +404,7 @@ no_flank:
     dec ecx
     jmp flank_directions_loop
 flank_end:
-    pop ebx                         ; Restaura EBX (ABI)
+    pop rbx                         ; Restaura EBX (ABI)
 	ret
 
 ;   Descripcion:
@@ -513,7 +513,7 @@ draw_loop_i:
     mov al, C_SEPARATOR           ; Agrega el separador de columna
     stosb
     
-    push ecx                        ; Apila i para no perderlo
+    push rcx                        ; Apila i para no perderlo
     mov ecx, N                      ; j = 8 para bucle interno (loop_j)
 draw_loop_j:
     ; Construccion del cuerpo de la columna
@@ -536,7 +536,7 @@ draw_loop_j:
     mov al, LINE_FEED
     stosb                           ; Concatenar salto de linea
 
-    pop ecx                         ; Restaura i
+    pop rcx                         ; Restaura i
     loop draw_loop_i                ; (i == 0)? T: i-- & JMP loop_i : F: fin j_loop
     ; Construccion del ID de las columnas
     mov al, ' '
@@ -567,8 +567,8 @@ concat_pts_loop:
 load_p_two_pts:
     movzx eax, byte[points + 1]     ; Carga los puntos del J2
 concat_pts:
-    push esi                        ; Guarda el puntero al mensaje
-    push edi                        ; Guarda el puntero al buffer principal
+    push rsi                        ; Guarda el puntero al mensaje
+    push rdi                        ; Guarda el puntero al buffer principal
     lea esi, buffer_aux
 
 ; Convierte un entero a una cadena de caracteres (REQ: eax = n, esi = buffer)
@@ -589,7 +589,7 @@ loop_i_t_s:
     jnz loop_i_t_s          ; De lo contrario continua el loop
     inc esi                 ; Ajusta ESI para que apunte al inicio de la cadena
 
-    pop edi                 ; Recupera el puntero al buffer principal
+    pop rdi                 ; Recupera el puntero al buffer principal
 copy_points_to_buffer:
     lodsb
     cmp al, 0x0             ; Verifica que no sea el final de la cadena
@@ -597,7 +597,7 @@ copy_points_to_buffer:
     stosb
     jmp copy_points_to_buffer
 restore_pts_msg_ptr:
-    pop esi                 ; Restaura el puntero a msg_points
+    pop rsi                 ; Restaura el puntero a msg_points
     mov al, ' '
     stosb                           ; Concatenar espacio
     jmp points_copied
