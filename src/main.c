@@ -10,35 +10,71 @@
     extern void flank();
     extern void update_points();
     extern bool is_game_over();
-
+    #define NUM_CELDAS 64
 // Estado de cada celda en el tablero.
-typedef enum { EMPTY, BLACK, WHITE } CellState;
+typedef enum { EMPTY, BLACK, WHITE, MOVS } CellState;
 extern CellState player;
+extern CellState tablero[NUM_CELDAS]; // Array lineal del tablero desde ensamblador
+GtkWidget *botones[8][8];
+
+void actualizar_colores() {
+    for (int i = 0; i < 8; ++i) {
+        for (int j = 0; j < 8; ++j) {
+            int index = i * 8 + j; // Índice en el array lineal
+            GtkWidget *button = botones[i][j];
+
+            // Remueve cualquier clase CSS previa de color
+            gtk_widget_remove_css_class(button, "black");
+            gtk_widget_remove_css_class(button, "white");
+            gtk_widget_remove_css_class(button, "possible");
+
+            // Asigna el color según el estado de la celda en el tablero
+            if (tablero[index] == BLACK) {
+                gtk_widget_add_css_class(button, "black"); 
+            } else if (tablero[index] == WHITE) {
+                gtk_widget_add_css_class(button, "white");
+            } else if (tablero[index] == MOVS) {
+                gtk_widget_add_css_class(button, "possible"); // Clase para las jugadas posibles
+            }
+        }
+    }
+}
 
 // Call para el evento de clic en los botones del tablero.
 static void on_button_clicked(GtkButton *button, gpointer data) {
-    CellState *estadoCelda = (CellState *)data;
+    int *pos = (int *)data;
+    int i = pos[0];
+    int j = pos[1];
+    int index = i * 8 + j; // Índice en el array lineal de ensamblador
 
-    if (*estadoCelda == EMPTY) {
-        *estadoCelda = player;
-        // Cambia el color del boton segun el jugador actual.
-        change_player();
+    if (tablero[index] == EMPTY) {
+        tablero[index] = player; // Asigna el estado del jugador actual a la celda
+        actualizar_colores();    // Actualiza los colores de los botones
+        change_player();         // Cambia el jugador actual en ensamblador
     }
 }
 
 // Crea el tablero de juego.
 static GtkWidget* create_board() {
-    GtkWidget *grid = gtk_grid_new(); // Crea un nuevo tablero.
+    GtkWidget *grid = gtk_grid_new(); // Crea una nueva cuadrícula para el tablero.
     for (int i = 0; i < 8; ++i) {
         for (int j = 0; j < 8; ++j) {
-            GtkWidget *button = gtk_button_new(); // Crea un nuevo boton.
-            CellState *estadoCelda = g_new0(CellState, 1); // Crea un estado para la celda inicializado en 0 = EMPTY.
-            g_signal_connect(button, "clicked", G_CALLBACK(on_button_clicked), estadoCelda); // Conecta el evento de clic del boton a la funcion callback.
-            gtk_grid_attach(GTK_GRID(grid), button, i, j, 1, 1); // Agrega el boton a la cuadrilla en la posicion especificada.
+            GtkWidget *button = gtk_button_new(); // Crea un nuevo botón.
+            botones[i][j] = button;               // Guarda el botón en el array bidimensional
+            tablero[i * 8 + j] = EMPTY;           // Inicializa la celda en el tablero de ensamblador
+
+            // Asigna la posición de la celda para el callback
+            int *pos = g_new(int, 2);
+            pos[0] = i;
+            pos[1] = j;
+            g_signal_connect(button, "clicked", G_CALLBACK(on_button_clicked), pos);
+
+            gtk_grid_attach(GTK_GRID(grid), button, i, j, 1, 1); // Agrega el botón a la cuadrícula
         }
     }
     return grid;
 }
+
 
 int main(int argc, char *argv[]) {
     gtk_init(); // Inicializa GTK.
@@ -58,7 +94,8 @@ int main(int argc, char *argv[]) {
     gtk_css_provider_load_from_string(css_provider,
         "button { background-color: green; }"
         "button.black { background-color: black; }"
-        "button.white { background-color: white; }"); // Define las clases CSS para los botones.
+        "button.white { background-color: white; }"
+        "button.possible { background-color: #9bfeff; }"); // Clase CSS para posibles jugadas.
     gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(css_provider), GTK_STYLE_PROVIDER_PRIORITY_USER); // Agrega el proveedor CSS al contexto de estilo.
 
     GMainLoop *loop = g_main_loop_new(NULL, FALSE); // Crea un nuevo bucle principal.
