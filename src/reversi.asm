@@ -31,6 +31,7 @@ section .data
 section .bss
     buffer      resb  BUFFER_LENGTH ; Reserva 512B en mem. para el buffer de IO
     buffer_aux  resb  N             ; Reserva 8B en mem. para el buffer auxiliar
+    global board
     board       resb  BOARD_SIZE    ; Reserva mem. en memoria para el tablero (8x8 = 64 bytes)
     global row
     row         resb  1             ; Almacena el valor de la fila a la cual accesar (1 byte)
@@ -57,7 +58,6 @@ section .text
     global flank
     global update_points
     global is_game_over
-
 ; Punto de entrada del programa
 _start:
     call init
