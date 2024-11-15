@@ -97,18 +97,25 @@ static void activate (GtkApplication* app, gpointer user_data) {
                                                GTK_STYLE_PROVIDER(css_provider),
                                                GTK_STYLE_PROVIDER_PRIORITY_USER);
     g_object_unref(css_provider);
+    
+    mark_valid_moves();
+    actualizar_colores();    // Actualiza los colores de los botones
 }
 
 static void on_button_clicked (GtkButton *button, gpointer data) {
     int *coords = (int *)data;
     int i = coords[X];
     int j = coords[Y];
-
+    unmark_valid_moves();
+    
     if (board[i][j] == EMPTY) {
         board[i][j] = player; // Asigna el estado del jugador actual a la celda
         actualizar_colores();    // Actualiza los colores de los botones
         change_player();         // Cambia el jugador actual en ensamblador
     }
+    mark_valid_moves();
+    actualizar_colores();    // Actualiza los colores de los botones
+    
     print_board();
 }
 
