@@ -4,19 +4,27 @@
 #define X           0
 #define Y           1
 // Estilo de la UI
-const char*    CSS = 
-    "button {"
-    "   background-color: green;"
-    "} "
-    "button.black {"
-    "   background-color: black;"
-    "} "
-    "button.white {"
-    "   background-color: white;"
-    "} "
-    "button.possible {"
-    "   background-color: blue;"
-    "}";
+const char* CSS =   R"(
+        button {
+            background-color: green;
+        }
+
+        .black {
+            background-color: black;
+            border-radius: 50%;
+        }
+
+        .white {
+            background-color: white;
+            border-radius: 50%;
+        }
+
+        .possible {
+            background-color: green;
+            border-radius: 50%;
+            border: 4px solid blue;
+        }
+    )";
 // Funciones de ensamblador
 extern void init();                 // Inicializacion del tablero y variables
 extern void change_player();        // Cambio de jugador
@@ -24,8 +32,8 @@ extern void set_token();            // Coloca una ficha del jugador en turno
 extern void mark_valid_moves();     // Marca las jugadas validas
 extern void unmark_valid_moves();   // Desmarca las jugadas validas
 extern bool player_has_moves();     // Indica si un jugador tiene movidas validas
-extern bool validate_move();        // Valida la jugada que se quiere
-extern void flank();                // Flanquea (voltea las fichas)
+extern bool validate_move(uint32_t index);// Valida la jugada que se quiere
+extern void flank(uint32_t index);  // Voltea las fichas en los flanqueos validos desde la pos. indicada
 extern void update_points();        // Actualiza los puntos de ambos jugadores
 extern bool is_game_over();         // Indica si la partida ha finalizado
 // Variables de ensamblador
@@ -39,7 +47,7 @@ typedef enum { EMPTY, BLACK, WHITE, MOVS } CellState;
 // Inicializa los Wigdets y otros componenetes necesarios de la interfaz
 static void activate (GtkApplication* app, gpointer user_data);
 
-static void actualizar_colores();
+static void actualizar_interfaz();
 
 // Call para el evento de clic en los botones del tablero.
 static void on_button_clicked (GtkButton *button, gpointer data);
@@ -81,6 +89,7 @@ static void activate (GtkApplication* app, gpointer user_data) {
 
     window = gtk_application_window_new (app); // Crea una nueva ventana.
     gtk_window_set_title(GTK_WINDOW(window), "Reversi"); // Establece el titulo de la ventana.
+    gtk_window_set_default_size(GTK_WINDOW(window), 400, 400); // Establece el tamaño de la ventana.
     g_signal_connect(window, "destroy", G_CALLBACK(gtk_window_destroy), NULL); // Conecta el evento de cerrar ventana.
 
     grid = init_grid(); // Crea el tablero.
@@ -99,41 +108,50 @@ static void activate (GtkApplication* app, gpointer user_data) {
     g_object_unref(css_provider);
     
     mark_valid_moves();
-    actualizar_colores();    // Actualiza los colores de los botones
+    actualizar_interfaz();    // Actualiza la interfaz completa del juego
 }
 
 static void on_button_clicked (GtkButton *button, gpointer data) {
     int *coords = (int *)data;
     int i = coords[X];
     int j = coords[Y];
-    unmark_valid_moves();
-    
-    if (board[i][j] == EMPTY) {
-        board[i][j] = player; // Asigna el estado del jugador actual a la celda
-        actualizar_colores();    // Actualiza los colores de los botones
-        change_player();         // Cambia el jugador actual en ensamblador
+    int index = i * N + j;
+
+    if (is_game_over() != true) {
+        if (player_has_moves() != false) {
+            if (validate_move(index) != false) {
+                unmark_valid_moves();
+                flank(index);
+                update_points();
+                change_player();         // Cambia el jugador actual en ensamblador
+                mark_valid_moves();
+                actualizar_interfaz();    // Actualiza la interfaz completa del juego
+            }
+        } else {
+            change_player();         // Cambia el jugador actual en ensamblador
+            mark_valid_moves();
+            actualizar_interfaz();    // Actualiza la interfaz completa del juego
+        }
+        print_board();
     }
-    mark_valid_moves();
-    actualizar_colores();    // Actualiza los colores de los botones
-    
-    print_board();
 }
 
-static void actualizar_colores () {
+static void actualizar_interfaz () {
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
             GtkWidget *button = botones[i][j];
-            gtk_widget_remove_css_class(button, "black");
-            gtk_widget_remove_css_class(button, "white");
-            gtk_widget_remove_css_class(button, "possible");
+            GtkWidget *token = gtk_widget_get_first_child(button);
+            gtk_widget_remove_css_class(token, "black");
+            gtk_widget_remove_css_class(token, "white");
+            gtk_widget_remove_css_class(token, "possible");
 
             // Asigna el color según el estado de la celda en el tablero
             if (board[i][j] == BLACK) {
-                gtk_widget_add_css_class(button, "black");
+                gtk_widget_add_css_class(token, "black");
             } else if (board[i][j] == WHITE) {
-                gtk_widget_add_css_class(button, "white");
+                gtk_widget_add_css_class(token, "white");
             } else if (board[i][j] == MOVS) {
-                gtk_widget_add_css_class(button, "possible");
+                gtk_widget_add_css_class(token, "possible");
             }
         }
     }
@@ -143,15 +161,19 @@ static GtkWidget* init_grid() {
     GtkWidget *grid = gtk_grid_new(); // Crea una nueva cuadrícula para el tablero.
     for (int i = 0; i < N; i++) {
         for (int j = 0; j < N; j++) {
-            GtkWidget *button = gtk_button_new(); // Crea un nuevo botón.
+             // Crea un nuevo botón con un GtkLabel que hará de ficha
+            GtkWidget *button = gtk_button_new();
+            GtkWidget *label = gtk_label_new("");
+            gtk_button_set_child(GTK_BUTTON(button), label);
             botones[i][j] = button;               // Guarda el botón en el array bidimensional
-
             // Asigna la posición de la celda para el callback
             int *coords = g_new(int, 2);
             coords[X] = i;
             coords[Y] = j;
             g_signal_connect(button, "clicked", G_CALLBACK(on_button_clicked), coords);
 
+            //gtk_widget_set_size_request(gtk_widget_get_first_child(button), 40, 40); // Forzar el tamaño de la ficha
+            gtk_widget_set_size_request(button, 50, 50); // Forzar el tamaño del botón.
             gtk_grid_attach(GTK_GRID(grid), button, j, i, 1, 1); // Agrega el botón a la cuadrícula en la pos. i, j
         }
     }

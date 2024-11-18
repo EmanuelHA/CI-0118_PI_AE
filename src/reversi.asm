@@ -369,10 +369,11 @@ invalid_move:
 ;     board - pasa a contener la jugada realizada, es decir las fichas volteadas
 flank:
     push rbx                        ; Guarda EBX (segun ABI)
+    call convert_index_to_coords
     mov ecx, N - 1                  ; Indice para hacer el recorrido en todas las direcciones
 flank_directions_loop:
     call find_opponent_token
-; Si encontro al oponente en esa direcion (OFF == 1) varifica que la ultima celda que se visito sea del jugador
+; Si encontro al oponente en esa direcion (OFF == 1) verifica que la ultima celda que se visito sea del jugador
 ; en caso de pertenecer al jugador es un flanqueo valido, por lo que procede a voltear las fichas del oponente
     mov bl, byte [game_flags]
     test bl, P_OFF_MASK             ; Verifica el estado del bit oponente encontrado (OFF) en game_flags
